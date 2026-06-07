@@ -1,0 +1,32 @@
+# Render Blueprint — one-click deploy of the MediWall analytics backend.
+# Docs: https://render.com/docs/blueprint-spec
+#
+# How to use:
+#   1. Push this repo to GitHub/GitLab.
+#   2. Render Dashboard → New → Blueprint → pick this repo.
+#   3. Render reads this file and creates the service. It will PROMPT for the two
+#      secret env vars below (sync:false) — paste them in (see README §Deploy).
+#
+# Free plan note: free web services sleep after ~15 min idle and cold-start on the
+# next request (~30-60s). That's fine here — the app's flush is fire-and-forget and
+# retries on the next launch/foreground if a cold start times out.
+services:
+  - type: web
+    name: mediwall-analytics
+    runtime: docker            # builds the included Dockerfile
+    plan: free
+    region: oregon             # change if you prefer (e.g. ohio, frankfurt, singapore)
+    branch: main               # the branch Render auto-deploys from
+    healthCheckPath: /health   # open endpoint (no api key) for Render's probe
+    autoDeploy: true           # redeploy on every push to `branch`
+    envVars:
+      # Secrets — NOT stored in git. Render prompts for these on first deploy.
+      - key: MONGODB_URI
+        sync: false
+      - key: ANALYTICS_API_KEY
+        sync: false
+      # Non-secret config baked into the blueprint.
+      - key: MONGODB_DB
+        value: mediwall_analytics
+      - key: NODE_ENV
+        value: production

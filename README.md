@@ -83,23 +83,42 @@ tests) and **enforced once you set it**.
 
 ---
 
-## 5. Deploy
+## 5. Deploy to Render (recommended — uses the included `render.yaml`)
 
-Any Node host works. Two common paths:
+A Render **Blueprint** ([render.yaml](render.yaml)) is included, so the service is created
+for you with the right runtime, health check, and env-var slots. Render provides the HTTPS
+URL iOS requires.
 
-### Render / Railway / Fly.io (Docker)
-- Point the platform at this folder; it builds the included `Dockerfile`.
-- Set env vars `MONGODB_URI`, `MONGODB_DB`, `ANALYTICS_API_KEY` in the platform dashboard.
-- The platform injects `PORT`; the app honors it. HTTPS/TLS is provided by the platform.
+### Step-by-step
+1. **Push this repo to GitHub/GitLab** (Render deploys from a Git remote):
+   ```bash
+   git remote add origin https://github.com/<you>/mediwall-analytics-backend.git
+   git push -u origin main
+   ```
+2. **Atlas Network Access** — Render's free plan has **no static outbound IP**, so the DB
+   must accept connections from anywhere: Atlas → **Network Access** → **Add IP Address** →
+   **Allow Access from Anywhere** (`0.0.0.0/0`). The DB user's password is still required,
+   so access stays credential-gated. *(For a fixed IP later, use a paid Render plan or a
+   static-egress add-on, then narrow this.)*
+3. **Render → New → Blueprint** → connect the repo. Render reads `render.yaml` and shows the
+   service `mediwall-analytics`.
+4. **Paste the two secrets** when prompted (they are `sync:false`, never in git):
+   - `MONGODB_URI` — your Atlas connection string.
+   - `ANALYTICS_API_KEY` — the same value as the app's `expo.extra.analytics.apiKey`.
+5. **Apply / Create**. First build takes a few minutes. When live, Render gives a URL like
+   `https://mediwall-analytics.onrender.com`.
+6. **Verify:** open `https://YOUR-URL/health` → `{ "ok": true }`.
 
-### Plain Node host
+> Free-plan behavior: the service **sleeps after ~15 min idle** and cold-starts (~30–60s) on
+> the next request. That's fine here — the app's flush is fire-and-forget and retries on the
+> next launch/foreground if a cold start times out. Upgrade to a paid instance if you want
+> always-on / no cold starts.
+
+### Alternative: any Node host
 ```bash
 npm install --omit=dev
-NODE_ENV=production node src/server.js
+NODE_ENV=production node src/server.js   # put behind a TLS reverse proxy — iOS requires HTTPS
 ```
-Put it behind a TLS-terminating reverse proxy (Caddy/Nginx) — **iOS requires HTTPS**.
-
-After deploy, hit `https://YOUR_HOST/health` → `{ "ok": true }`.
 
 ---
 
