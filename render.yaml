@@ -25,7 +25,13 @@ services:
         sync: false
       - key: ANALYTICS_API_KEY
         sync: false
+      # Password for the built-in dashboard (GET /dashboard, Basic Auth). Render
+      # prompts for it; set a strong value before sharing the URL.
+      - key: DASHBOARD_PASSWORD
+        sync: false
       # Non-secret config baked into the blueprint.
+      - key: DASHBOARD_USER
+        value: admin
       - key: MONGODB_DB
         value: mediwall_analytics
       - key: NODE_ENV

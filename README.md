@@ -5,7 +5,10 @@ usage metrics and user feedback from the MediWall app. It stores **no PHI** — 
 counts of allowlisted event names, tied to a random per-install id.
 
 - Client contract & privacy model: see [../MediWall-app-master/ANALYTICS_BACKEND.md](../MediWall-app-master/ANALYTICS_BACKEND.md)
-- Endpoints: `POST /v1/metrics`, `POST /v1/feedback`, `GET /health`
+- Ingest endpoints: `POST /v1/metrics`, `POST /v1/feedback`, `GET /health`
+- **Built-in dashboard: `GET /dashboard`** — a self-contained analytics UI (DAU/MAU,
+  retention, feature adoption, crashes, platform/version split, feedback) served by this
+  same service. No external tool, CDN, or build step. See [§7](#7-reading-the-data--the-built-in-dashboard).
 
 ---
 
@@ -73,13 +76,17 @@ Then check Atlas → database `mediwall_analytics` → collections `metrics_dail
 
 | Var                 | Required | Purpose                                                        |
 | ------------------- | -------- | -------------------------------------------------------------- |
-| `MONGODB_URI`       | yes      | Atlas connection string (no `/dbname` in the path).           |
-| `MONGODB_DB`        | no       | Analytics DB name. Default `mediwall_analytics`.              |
-| `ANALYTICS_API_KEY` | no\*     | Shared secret the app sends as `x-api-key`. \*Set before prod. |
-| `PORT`              | no       | Listen port. Default `8080`.                                  |
+| `MONGODB_URI`        | yes      | Atlas connection string (no `/dbname` in the path).            |
+| `MONGODB_DB`         | no       | Analytics DB name. Default `mediwall_analytics`.               |
+| `ANALYTICS_API_KEY`  | no\*     | Shared secret the app sends as `x-api-key`. \*Set before prod. |
+| `DASHBOARD_PASSWORD` | no\*     | Basic-Auth password for `GET /dashboard`. \*Set before prod.   |
+| `DASHBOARD_USER`     | no       | Basic-Auth username for the dashboard. Default `admin`.        |
+| `PORT`               | no       | Listen port. Default `8080`.                                   |
 
-The auth check is **skipped while `ANALYTICS_API_KEY` is empty** (convenient for first
-tests) and **enforced once you set it**.
+Both auth checks are **skipped while their secret is empty** (convenient for first tests)
+and **enforced once you set it**. `ANALYTICS_API_KEY` gates ingest (the app's `x-api-key`);
+`DASHBOARD_PASSWORD` gates the browser dashboard — they're deliberately separate so the
+app's ingest secret never has to be typed into a browser.
 
 ---
 
@@ -136,7 +143,30 @@ can be wired into the two client POST helpers, then rebuild the app (`eas build`
 
 ---
 
-## 7. Reading the data (DAU / MAU / retention)
+## 7. Reading the data — the built-in dashboard
+
+The fastest way to see your analytics is the **dashboard this service ships with**:
+
+```
+https://YOUR-URL/dashboard          # (locally: http://localhost:8080/dashboard)
+```
+
+It's a single self-contained page (no external tool, CDN, or build step) that calls one
+read-only endpoint — `GET /v1/stats/summary?days=30` — and renders:
+
+- **KPIs:** active installs, DAU today, new installs, sessions, crash-free rate, Day-1 / Day-7 retention.
+- **Trends:** active users vs. sessions, home opens vs. crashes (7 / 30 / 90-day toggle).
+- **Feature adoption**, **platform split**, **app-version split**, **retention by cohort**.
+- **Feedback:** category breakdown + a triage table of the newest 50 submissions.
+
+It auto-refreshes every 5 minutes and is protected by HTTP Basic Auth (`DASHBOARD_USER` /
+`DASHBOARD_PASSWORD`). The auth is **skipped while `DASHBOARD_PASSWORD` is empty** (local
+testing) and **enforced once you set it** — set it before sharing the URL, since the
+feedback table shows messages and contact emails.
+
+> Prefer Atlas-native dashboards or need ad-hoc exploration? **MongoDB Charts** / **Metabase**
+> still work against the same `mediwall_analytics` DB — a chart-by-chart guide is in
+> [CHARTS.md](CHARTS.md). The queries below are the same aggregations the dashboard runs.
 
 ```js
 // DAU — distinct installs that reported a given day:

@@ -20,6 +20,15 @@ const config = {
   // check is skipped (handy for first local testing) — set it before production.
   apiKey: process.env.ANALYTICS_API_KEY || '',
 
+  // ── Built-in analytics dashboard (GET /dashboard) ──────────────────────────
+  // Protected with HTTP Basic Auth, kept SEPARATE from the ingest `x-api-key` so
+  // the app's secret never has to live in a browser. Mirrors the ingest-auth
+  // philosophy: the gate is skipped while the password is empty (convenient for
+  // local testing) and enforced once you set it. SET IT BEFORE PRODUCTION — the
+  // dashboard exposes feedback messages and contact emails.
+  dashboardUser: process.env.DASHBOARD_USER || 'admin',
+  dashboardPassword: process.env.DASHBOARD_PASSWORD || '',
+
   // Max accepted JSON body. Payloads are tiny; this blunts abuse.
   bodyLimit: process.env.BODY_LIMIT || '16kb',
 };

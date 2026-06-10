@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const express = require('express');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
@@ -7,6 +8,8 @@ const rateLimit = require('express-rate-limit');
 const config = require('./config');
 const { getDb } = require('./db');
 const { ALLOWED_EVENTS, FEEDBACK_CATEGORIES } = require('./events');
+const { getSummary } = require('./stats');
+const { dashboardHtml } = require('./dashboard');
 
 const app = express();
 app.disable('x-powered-by');
@@ -26,6 +29,117 @@ app.use(
 
 // ── Health check (no auth) — for platform probes / uptime checks ──────────────
 app.get('/health', (_req, res) => res.json({ ok: true }));
+
+// ── Epic OAuth redirect bounce (no auth — Epic's browser redirect lands here) ──
+// iOS Safari often refuses to follow Epic's final HTTP 302 to the custom scheme
+// `mediwall://callback` (user activation is lost across the multi-hop
+// Authorize → LogOut → Redirect chain), which strands the login on a logged-out
+// MyChart page. Epic also requires an https redirect URI before an app can be
+// marked ready for production. This page receives the ?code=&state= query and
+// hands it to the app via the custom scheme — automatically when Safari allows
+// it, otherwise via the button tap (a real user gesture, which Safari honors).
+// The auth code is single-use, expires within minutes, and is useless without
+// the PKCE code_verifier stored on the device, so serving this page without
+// auth is safe; nothing is logged or stored here.
+app.get('/epic/callback', (_req, res) => {
+  // Self-contained page: inline script/style only, no network access.
+  // Overrides helmet's global CSP (which blocks inline script).
+  res.set(
+    'Content-Security-Policy',
+    "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+  );
+  res.set('Cache-Control', 'no-store');
+  res.set('Referrer-Policy', 'no-referrer');
+  res.type('html').send(`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Returning to MediWall</title>
+<style>
+  body { margin:0; font-family:-apple-system, system-ui, sans-serif; background:#F9FBF9; color:#1C3D2A;
+         display:flex; min-height:100vh; align-items:center; justify-content:center; text-align:center; }
+  main { padding:32px; max-width:420px; }
+  h1 { font-size:22px; margin:0 0 8px; }
+  p  { font-size:16px; line-height:1.5; color:#3A5A48; }
+  a.btn { display:inline-block; margin-top:20px; padding:14px 28px; border-radius:12px;
+          background:#4CAF50; color:#fff; font-size:17px; font-weight:600; text-decoration:none; }
+  small { display:block; margin-top:24px; color:#6B8577; font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Returning you to MediWall&hellip;</h1>
+  <p>If the app doesn't open automatically, tap the button below.</p>
+  <a class="btn" id="open" href="#">Open MediWall</a>
+  <small>You can close this tab once MediWall opens.</small>
+</main>
+<script>
+  (function () {
+    var target = 'mediwall://callback' + (location.search || '');
+    document.getElementById('open').setAttribute('href', target);
+    // Auto-attempt the handoff; if Safari blocks it (no user activation
+    // surviving the redirect chain), the button tap always works.
+    location.replace(target);
+  })();
+</script>
+</body>
+</html>`);
+});
+
+// ── Built-in dashboard (Basic-Auth gated, SEPARATE from the ingest x-api-key) ──
+// Registered BEFORE the x-api-key middleware so these routes use their own gate
+// and the app's ingest secret never has to be entered into a browser.
+const safeEqual = (a, b) => {
+  const ab = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
+  // timingSafeEqual requires equal length; the length check itself is not secret.
+  return ab.length === bb.length && crypto.timingSafeEqual(ab, bb);
+};
+
+function dashboardAuth(req, res, next) {
+  // Mirror the ingest-auth philosophy: open while the password is unset (local
+  // testing), enforced once DASHBOARD_PASSWORD is configured.
+  if (!config.dashboardPassword) return next();
+  const [scheme, encoded] = (req.get('authorization') || '').split(' ');
+  if (scheme === 'Basic' && encoded) {
+    const [user, pass] = Buffer.from(encoded, 'base64').toString('utf8').split(':');
+    if (safeEqual(user, config.dashboardUser) && safeEqual(pass, config.dashboardPassword)) {
+      return next();
+    }
+  }
+  res.set('WWW-Authenticate', 'Basic realm="MediWall Analytics", charset="UTF-8"');
+  return res.sendStatus(401);
+}
+
+app.get('/', (_req, res) => res.redirect('/dashboard'));
+app.use(['/dashboard', '/v1/stats'], dashboardAuth);
+
+app.get('/dashboard', (_req, res) => {
+  // Tighten CSP just for this page: inline script/style for the self-contained
+  // dashboard, same-origin fetch only, no external origins. Overrides helmet's
+  // global default-src 'self' (which would block the inline code).
+  res.set(
+    'Content-Security-Policy',
+    "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; " +
+      "img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'",
+  );
+  res.type('html').send(dashboardHtml());
+});
+
+app.get('/v1/stats/summary', async (req, res) => {
+  try {
+    const db = await getDb();
+    const summary = await getSummary(db, req.query.days);
+    // Dashboard reads should always reflect fresh data, never a proxy cache.
+    res.set('Cache-Control', 'no-store');
+    return res.json(summary);
+  } catch (e) {
+    console.error(`/v1/stats/summary error: ${e}`);
+    return res.sendStatus(500);
+  }
+});
 
 // ── Shared-secret auth ────────────────────────────────────────────────────────
 // Enforced only when ANALYTICS_API_KEY is configured, so you can test locally
